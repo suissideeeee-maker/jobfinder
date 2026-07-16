@@ -18,12 +18,16 @@ All thresholds live in `bot/config.py`. Don't change them without being asked.
 
 ## Data source
 
-Neither Alpha Vantage nor Yahoo Finance has a direct MES/ES futures intraday
-series on their free tiers, so the bot tracks a correlated index ETF (`SPY`
-by default) as a stand-in. The tick-based stop/target and PnL are converted
-between the proxy symbol's price scale and MES/ES points using
-`PROXY_TO_INSTRUMENT_RATIO` and `INSTRUMENT_POINT_VALUE` in `bot/config.py` —
-adjust those if you switch proxies or contracts (MES vs ES).
+The bot trades real CME futures data directly via Yahoo Finance's continuous
+contract tickers: `MES=F` (Micro E-mini S&P 500, $5/point) by default, or
+`ES=F` (full-size E-mini S&P 500, $50/point). Both trade on CME Globex, so
+tick size and point value in `bot/config.py` match the real contract exactly
+— no ETF-proxy scaling needed. (Continuous-contract data can show small gaps
+around quarterly contract rolls; rare within the lookback windows used here.)
+
+If you ever fall back to an ETF proxy like `SPY` instead, set
+`PROXY_TO_INSTRUMENT_RATIO` back to `~10.0` to convert its price scale into
+ES/MES points.
 
 Two data providers are supported via `DATA_PROVIDER`:
 
@@ -60,12 +64,12 @@ Key settings (env vars, all optional):
 |---|---|---|
 | `DATA_PROVIDER` | `yfinance` | `yfinance` or `alphavantage` |
 | `ALPHAVANTAGE_API_KEY` | — | required only if `DATA_PROVIDER=alphavantage` |
-| `PROXY_SYMBOL` | `SPY` | ticker to poll |
+| `PROXY_SYMBOL` | `MES=F` | ticker to poll (`MES=F`, `ES=F`, or an ETF proxy) |
 | `BAR_INTERVAL` | `5min` | `1min/5min/15min/30min/60min`, must match your validated timeframe |
 | `STARTING_BALANCE` | `50000` | virtual account starting balance |
 | `NUM_CONTRACTS` | `1` | simulated contract size |
 | `INSTRUMENT_POINT_VALUE` | `5.0` | $/point/contract (MES=5, ES=50) |
-| `PROXY_TO_INSTRUMENT_RATIO` | `10.0` | proxy points per instrument point |
+| `PROXY_TO_INSTRUMENT_RATIO` | `1.0` | proxy points per instrument point (1.0 for real futures tickers, ~10.0 for an ETF proxy like SPY) |
 | `LOG_LEVEL` | `INFO` | console verbosity |
 
 ## Running it
@@ -135,5 +139,5 @@ to a PNG so you can eyeball it anytime.
   range touches both the stop and the target, the stop is assumed to hit
   first (conservative).
 - Only one position is open at a time.
-- Alpha Vantage's intraday endpoint only returns fully closed bars, so no
-  extra trimming of an in-progress candle is needed.
+- Both data providers' intraday endpoints only return fully closed bars, so
+  no extra trimming of an in-progress candle is needed.

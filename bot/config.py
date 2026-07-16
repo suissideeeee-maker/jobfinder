@@ -9,11 +9,12 @@ import os
 # --------------------------------------------------------------------------
 # Data source
 # --------------------------------------------------------------------------
-# Neither Alpha Vantage nor Yahoo Finance has direct MES/ES futures intraday
-# series on their free tiers, so we track a highly-correlated index ETF as a
-# proxy. SPY is the default; swap PROXY_SYMBOL for another correlated
-# instrument if you have one.
-PROXY_SYMBOL = os.environ.get("PROXY_SYMBOL", "SPY")
+# Yahoo Finance publishes real CME continuous futures data directly (no ETF
+# proxy needed): "MES=F" for Micro E-mini S&P 500, "ES=F" for full-size
+# E-mini S&P 500. Both trade on CME Globex. Continuous-contract data can show
+# small gaps around quarterly contract rolls, but that's rare within the
+# short lookback windows this bot uses.
+PROXY_SYMBOL = os.environ.get("PROXY_SYMBOL", "MES=F")
 
 # "yfinance" (default) needs no API key and has no practical daily request
 # cap for this kind of polling. "alphavantage" is kept as an alternative for
@@ -62,11 +63,11 @@ INSTRUMENT_TICK_SIZE = 0.25
 INSTRUMENT_POINT_VALUE = float(os.environ.get("INSTRUMENT_POINT_VALUE", "5.0"))
 NUM_CONTRACTS = int(os.environ.get("NUM_CONTRACTS", "1"))
 
-# Approximate ratio of proxy-symbol points to instrument points, used only to
-# convert the tick-based stop/target into a price distance on the proxy feed.
-# SPY trades at roughly 1/10th of the S&P 500 index level tracked by ES/MES.
-# Re-derive this if you change PROXY_SYMBOL.
-PROXY_TO_INSTRUMENT_RATIO = float(os.environ.get("PROXY_TO_INSTRUMENT_RATIO", "10.0"))
+# Ratio of proxy-symbol points to instrument points. 1.0 because PROXY_SYMBOL
+# is now a real CME futures ticker (points already match 1:1). Only change
+# this if you fall back to an ETF proxy like SPY (~10 SPY points per ES/MES
+# point) instead of a real futures ticker.
+PROXY_TO_INSTRUMENT_RATIO = float(os.environ.get("PROXY_TO_INSTRUMENT_RATIO", "1.0"))
 
 STOP_LOSS_TICKS = 80
 TAKE_PROFIT_TICKS = 120
