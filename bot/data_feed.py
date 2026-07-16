@@ -1,9 +1,14 @@
 """
-Market data retrieval from Alpha Vantage.
+Market data retrieval.
 
 This runs as a standalone process (cron job or long-running loop), so it
-talks to the Alpha Vantage REST API directly with an API key rather than
-through any chat-session MCP connection.
+talks to the data provider's REST API directly rather than through any
+chat-session MCP connection.
+
+Two providers are supported (bot.config.DATA_PROVIDER):
+  - "yfinance" (default): no API key, no practical daily request cap.
+  - "alphavantage": needs ALPHAVANTAGE_API_KEY; free tier caps out around
+    25 requests/day, which a 5-min polling loop exhausts in under two hours.
 """
 import logging
 import time
@@ -20,23 +25,55 @@ class DataFeedError(Exception):
     pass
 
 
-def fetch_intraday(
-    symbol: str = None,
-    interval: str = None,
-    outputsize: str = "compact",
-    max_retries: int = 3,
-) -> pd.DataFrame:
+def fetch_intraday(symbol: str = None, interval: str = None) -> pd.DataFrame:
     """
-    Fetch intraday OHLCV bars for `symbol` at `interval` from Alpha Vantage.
+    Fetch intraday OHLCV bars for `symbol` at `interval` from whichever
+    provider is configured (bot.config.DATA_PROVIDER).
 
     Returns a DataFrame sorted ascending by timestamp with columns:
     open, high, low, close, volume. The DataFrame index is a tz-naive
-    pandas.Timestamp (exchange local time, as returned by Alpha Vantage).
+    pandas.Timestamp (exchange local time).
     """
     symbol = symbol or config.PROXY_SYMBOL
     interval = interval or config.BAR_INTERVAL
     if interval not in config.VALID_INTERVALS:
         raise ValueError(f"Unsupported interval: {interval}")
+
+    if config.DATA_PROVIDER == "yfinance":
+        return _fetch_intraday_yfinance(symbol, interval)
+    elif config.DATA_PROVIDER == "alphavantage":
+        return _fetch_intraday_alphavantage(symbol, interval)
+    else:
+        raise ValueError(f"Unsupported DATA_PROVIDER: {config.DATA_PROVIDER}")
+
+
+def _fetch_intraday_yfinance(symbol: str, interval: str) -> pd.DataFrame:
+    import yfinance as yf
+
+    yf_interval = config.YFINANCE_INTERVAL_MAP[interval]
+    lookback_days = config.YFINANCE_LOOKBACK_DAYS[interval]
+
+    df = yf.download(
+        symbol, period=f"{lookback_days}d", interval=yf_interval, progress=False, auto_adjust=False
+    )
+    if df.empty:
+        raise DataFeedError(f"yfinance returned no data for {symbol} at {interval}")
+
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    df = df.rename(columns=str.lower)[["open", "high", "low", "close", "volume"]]
+    df.index = pd.to_datetime(df.index)
+    if df.index.tz is not None:
+        df.index = df.index.tz_localize(None)
+    return df.astype(float).sort_index()
+
+
+def _fetch_intraday_alphavantage(
+    symbol: str,
+    interval: str,
+    outputsize: str = "compact",
+    max_retries: int = 3,
+) -> pd.DataFrame:
     if not config.ALPHAVANTAGE_API_KEY:
         raise DataFeedError("ALPHAVANTAGE_API_KEY is not set")
 

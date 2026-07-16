@@ -18,17 +18,28 @@ All thresholds live in `bot/config.py`. Don't change them without being asked.
 
 ## Data source
 
-Alpha Vantage has no direct MES/ES futures intraday series on the free API,
-so the bot tracks a correlated index ETF (`SPY` by default) via
-`TIME_SERIES_INTRADAY` as a stand-in. The tick-based stop/target and PnL are
-converted between the proxy symbol's price scale and MES/ES points using
+Neither Alpha Vantage nor Yahoo Finance has a direct MES/ES futures intraday
+series on their free tiers, so the bot tracks a correlated index ETF (`SPY`
+by default) as a stand-in. The tick-based stop/target and PnL are converted
+between the proxy symbol's price scale and MES/ES points using
 `PROXY_TO_INSTRUMENT_RATIO` and `INSTRUMENT_POINT_VALUE` in `bot/config.py` —
 adjust those if you switch proxies or contracts (MES vs ES).
 
-> Note: this bot runs as its own standalone process, so it calls the Alpha
-> Vantage REST API directly with an API key (`ALPHAVANTAGE_API_KEY`). It does
-> not use any MCP connection, since MCP tools only exist inside a chat
-> session and aren't reachable from a script running on its own schedule.
+Two data providers are supported via `DATA_PROVIDER`:
+
+- **`yfinance`** (default) — no API key required, no practical daily request
+  cap. This is what makes a 5-minute polling loop workable for free.
+- **`alphavantage`** — needs `ALPHAVANTAGE_API_KEY`. Its free tier caps out
+  around **25 requests/day**, which a 5-minute polling loop burns through in
+  under two hours (`run-once` makes exactly one API call per invocation, so
+  the limit comes from how often it's scheduled, not from the bot being
+  inefficient). Only use this if you have a paid Alpha Vantage plan, or are
+  running the bot infrequently (e.g. a few checks per day).
+
+> Note: this bot runs as its own standalone process, so it calls the data
+> provider's REST API directly. It does not use any MCP connection, since
+> MCP tools only exist inside a chat session and aren't reachable from a
+> script running on its own schedule.
 
 ## Setup
 
@@ -37,14 +48,18 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# edit .env and set ALPHAVANTAGE_API_KEY
 ```
 
-Key settings (env vars, all optional besides the API key):
+The default provider (`yfinance`) needs no further setup — you can run the
+bot right away. If you want to use Alpha Vantage instead, edit `.env` and
+set `DATA_PROVIDER=alphavantage` and `ALPHAVANTAGE_API_KEY=...`.
+
+Key settings (env vars, all optional):
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `ALPHAVANTAGE_API_KEY` | — | required |
+| `DATA_PROVIDER` | `yfinance` | `yfinance` or `alphavantage` |
+| `ALPHAVANTAGE_API_KEY` | — | required only if `DATA_PROVIDER=alphavantage` |
 | `PROXY_SYMBOL` | `SPY` | ticker to poll |
 | `BAR_INTERVAL` | `5min` | `1min/5min/15min/30min/60min`, must match your validated timeframe |
 | `STARTING_BALANCE` | `50000` | virtual account starting balance |
