@@ -1,1 +1,124 @@
-# jobfinder
+# Paper Trading Bot
+
+A persistent, script-driven version of the manual TradingView backtest: pulls
+market data, applies the validated EMA/RSI/ADX strategy, simulates trades
+against a virtual account, and logs everything to SQLite. **It never places
+real orders or touches a real brokerage — pure simulation.**
+
+## Strategy (ported from Pine Script, not re-tuned)
+
+- EMA(21) / EMA(55) crossover
+- RSI(14): long filter > 55, short filter < 45
+- ADX(14) > 20 trend-strength filter
+- Entry: crossover + RSI + ADX all align on the same closed bar
+- Exit: 80-tick stop-loss / 120-tick take-profit, converted to price terms
+  for the instrument (see `bot/config.py`)
+
+All thresholds live in `bot/config.py`. Don't change them without being asked.
+
+## Data source
+
+Alpha Vantage has no direct MES/ES futures intraday series on the free API,
+so the bot tracks a correlated index ETF (`SPY` by default) via
+`TIME_SERIES_INTRADAY` as a stand-in. The tick-based stop/target and PnL are
+converted between the proxy symbol's price scale and MES/ES points using
+`PROXY_TO_INSTRUMENT_RATIO` and `INSTRUMENT_POINT_VALUE` in `bot/config.py` —
+adjust those if you switch proxies or contracts (MES vs ES).
+
+> Note: this bot runs as its own standalone process, so it calls the Alpha
+> Vantage REST API directly with an API key (`ALPHAVANTAGE_API_KEY`). It does
+> not use any MCP connection, since MCP tools only exist inside a chat
+> session and aren't reachable from a script running on its own schedule.
+
+## Setup
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# edit .env and set ALPHAVANTAGE_API_KEY
+```
+
+Key settings (env vars, all optional besides the API key):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ALPHAVANTAGE_API_KEY` | — | required |
+| `PROXY_SYMBOL` | `SPY` | ticker to poll |
+| `BAR_INTERVAL` | `5min` | `1min/5min/15min/30min/60min`, must match your validated timeframe |
+| `STARTING_BALANCE` | `50000` | virtual account starting balance |
+| `NUM_CONTRACTS` | `1` | simulated contract size |
+| `INSTRUMENT_POINT_VALUE` | `5.0` | $/point/contract (MES=5, ES=50) |
+| `PROXY_TO_INSTRUMENT_RATIO` | `10.0` | proxy points per instrument point |
+| `LOG_LEVEL` | `INFO` | console verbosity |
+
+## Running it
+
+```bash
+# One check-and-trade cycle (for cron / Task Scheduler)
+python main.py run-once
+
+# Long-running process instead of cron
+python main.py loop
+
+# Suppress routine INFO logs, keep warnings/errors
+python main.py run-once --quiet
+
+# Print performance stats
+python main.py report
+
+# Stats + save an equity curve PNG
+python main.py report --plot
+```
+
+`run-once` picks up wherever it left off: it remembers the last bar it
+evaluated (in SQLite) and walks forward through any bars it missed, so a
+cron job that's occasionally late or skips a run won't lose stop/target
+checks on intermediate bars. On the very first run it starts "live" from
+the most recent closed bar rather than replaying all of history.
+
+## Scheduling
+
+**Cron (Mac/Linux)** — run every 5 minutes to match a 5-min bar strategy:
+
+```cron
+*/5 * * * * cd /path/to/jobfinder && /path/to/venv/bin/python main.py run-once --quiet >> logs/cron.log 2>&1
+```
+
+For a 30-min strategy, use `*/30 * * * *` and set `BAR_INTERVAL=30min` in `.env`.
+
+**Windows Task Scheduler** — create a Basic Task that runs on a repeating
+5 (or 30) minute trigger, with:
+- Program: `C:\path\to\venv\Scripts\python.exe`
+- Arguments: `main.py run-once --quiet`
+- Start in: `C:\path\to\jobfinder`
+
+**Or run it as a standing process** instead of cron:
+
+```bash
+nohup python main.py loop > logs/loop.log 2>&1 &
+```
+
+## Persistence & logs
+
+- `data/paper_trading.db` — SQLite: `trades`, `equity_curve`, `signal_log`
+  (every signal check is recorded here, even non-trades, for debugging)
+- `logs/bot.log` — full log history (always DEBUG level on disk, regardless
+  of `--quiet`)
+
+## Reporting
+
+`python main.py report` prints starting/current balance, total PnL, trade
+count, win rate, profit factor, and max drawdown — the same metrics tracked
+in the TradingView backtests. `--plot` additionally saves the equity curve
+to a PNG so you can eyeball it anytime.
+
+## Assumptions worth knowing about
+
+- Stop/target checks use each bar's high/low (not just its close). If a bar's
+  range touches both the stop and the target, the stop is assumed to hit
+  first (conservative).
+- Only one position is open at a time.
+- Alpha Vantage's intraday endpoint only returns fully closed bars, so no
+  extra trimming of an in-progress candle is needed.
